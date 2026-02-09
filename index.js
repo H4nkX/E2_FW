@@ -9,13 +9,8 @@ app.use(express.json());
 // 企业微信 webhook 配置
 const webhooks = {
   default: {
-    url: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=f9d8171b-5d6f-4be2-a094-3a4aa65b7f27'
+    url: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=ccd8e20d-a6b0-40dc-bb39-3737332840bd'
   }
-  // 可以在这里添加更多 webhook 配置
-  // 例如：
-  // another: {
-  //   url: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=another-key'
-  // }
 };
 
 // 频率限制：存储每个 webhook 的调用记录
@@ -85,6 +80,33 @@ function sendToWechat(webhookUrl, message) {
   });
 }
 
+// 时间转换为北京时间（UTC+8），格式：YYYY-MM-DD HH:mm:ss
+const convertToBeijingTime = (timeStr) => {
+  if (!timeStr) return "未指定";
+  try {
+    let time = Number(timeStr);
+    // 处理10位秒级/13位毫秒级时间戳
+    if (!isNaN(time)) {
+      time = time.toString().length === 10 ? time * 1000 : time;
+    } else {
+      time = new Date(timeStr).getTime();
+    }
+    // 格式化输出北京时间
+    return new Date(time).toLocaleString('zh-CN', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
+  } catch (e) {
+    return "时间格式异常";
+  }
+};
+
 // 发送文本消息的路由
 app.post('/api/send/:webhook?', async (req, res) => {
   try {
@@ -95,12 +117,10 @@ app.post('/api/send/:webhook?', async (req, res) => {
       return res.status(404).json({ error: 'Webhook not found' });
     }
     
-    // 检查频率限制
     if (!checkRateLimit(webhookName)) {
       return res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
     }
     
-    // 验证请求体
     if (!req.body || typeof req.body !== 'object') {
       return res.status(400).json({ error: 'Invalid request body. Must be a JSON object.' });
     }
@@ -111,11 +131,9 @@ app.post('/api/send/:webhook?', async (req, res) => {
       return res.status(400).json({ error: 'Content is required and must be a non-empty string.' });
     }
     
-    // 确保 mentioned_list 和 mentioned_mobile_list 是数组
     const safeMentionedList = Array.isArray(mentioned_list) ? mentioned_list : [];
     const safeMentionedMobileList = Array.isArray(mentioned_mobile_list) ? mentioned_mobile_list : [];
     
-    // 构建消息对象
     const message = {
       msgtype: 'text',
       text: {
@@ -125,10 +143,8 @@ app.post('/api/send/:webhook?', async (req, res) => {
       }
     };
     
-    // 发送消息到企业微信
     const result = await sendToWechat(webhook.url, message);
     
-    // 检查企业微信返回的错误
     if (result.errcode !== 0) {
       console.error(`WeChat API error (${webhookName}):`, result);
       return res.status(400).json(result);
@@ -151,12 +167,10 @@ app.post('/api/send/markdown/:webhook?', async (req, res) => {
       return res.status(404).json({ error: 'Webhook not found' });
     }
     
-    // 检查频率限制
     if (!checkRateLimit(webhookName)) {
       return res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
     }
     
-    // 验证请求体
     if (!req.body || typeof req.body !== 'object') {
       return res.status(400).json({ error: 'Invalid request body. Must be a JSON object.' });
     }
@@ -167,7 +181,6 @@ app.post('/api/send/markdown/:webhook?', async (req, res) => {
       return res.status(400).json({ error: 'Content is required and must be a non-empty string.' });
     }
     
-    // 构建消息对象
     const message = {
       msgtype: 'markdown',
       markdown: {
@@ -175,10 +188,8 @@ app.post('/api/send/markdown/:webhook?', async (req, res) => {
       }
     };
     
-    // 发送消息到企业微信
     const result = await sendToWechat(webhook.url, message);
     
-    // 检查企业微信返回的错误
     if (result.errcode !== 0) {
       console.error(`WeChat API error (${webhookName}):`, result);
       return res.status(400).json(result);
@@ -207,50 +218,46 @@ app.post('/', async (req, res) => {
       return res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
     }
     
-    // 获取当前时间
-    const now = new Date();
-    const timestamp = now.toLocaleString('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      timeZone: 'Asia/Shanghai'
-    });
-    
-    // 处理 TrendMiner 发送的复杂 JSON 对象
-    let content = 'TrendMiner 触发了 webhook 调用';
+    // 处理 TrendMiner 发送的 JSON 对象，只保留指定的5个字段
+    let alertMessage = '';
     
     if (req.body && typeof req.body === 'object') {
-      // 从 TrendMiner 的 JSON 中提取有用信息
+      // 只提取你指定的5个字段
       const { 
-        resultId, 
-        resultScore, 
-        resultUrl, 
         searchName, 
         webhookCallEvent, 
-        webhookCallTime 
+        searchType, 
+        resultStart, 
+        resultEnd 
       } = req.body;
       
-      // 构建有意义的消息内容
-      content = `TrendMiner 监控告警\n` +
-                `事件类型: ${webhookCallEvent || '未知'}\n` +
-                `结果 ID: ${resultId || '未知'}\n` +
-                `结果分数: ${resultScore || '未知'}\n` +
-                `搜索名称: ${searchName || '未知'}\n` +
-                `触发时间: ${webhookCallTime || '未知'}\n` +
-                `查看详情: ${resultUrl || '无链接'}`;
+      // 完全按照你给的格式构建告警内容，只保留这5个字段
+      alertMessage = [
+        `Search Name: ${searchName || "未指定"}`,
+        `Event Type: ${webhookCallEvent || "未指定"}`,
+        `Search Type: ${searchType || "未指定"}`,
+        `Start Time: ${convertToBeijingTime(resultStart)}`,
+        `End Time: ${convertToBeijingTime(resultEnd)}`
+      ].join("\n");
     } else if (req.body && typeof req.body === 'string') {
       // 如果请求体是字符串，直接使用
-      content = req.body.trim();
+      alertMessage = req.body.trim();
+    } else {
+      // 默认告警信息
+      alertMessage = [
+        'Search Name: 未指定',
+        'Event Type: 未指定',
+        'Search Type: 未指定',
+        'Start Time: 未指定',
+        'End Time: 未指定'
+      ].join("\n");
     }
     
-    // 构建消息对象
+    // 构建消息对象（纯指定字段，无任何额外内容）
     const message = {
       msgtype: 'text',
       text: {
-        content: `请注意有问题\n${content}\n时间：${timestamp}`
+        content: alertMessage
       }
     };
     
